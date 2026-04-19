@@ -42,3 +42,5 @@ Projet réalisé dans le cadre du cours **Développement Mobile (ING3 SEC)** à 
    ```bash
    git clone https://github.com/ton-utilisateur/audio-app.git
    cd audio-app
+2. liste des tache du projet :
+           https://www.notion.so/Flutter-project-34793a4d8c3d80668102f57aecd665d3?source=copy_link
