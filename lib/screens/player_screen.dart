@@ -6,16 +6,13 @@
 //  - Lecture en arrière-plan via just_audio
 //  - Lecture / Pause / Répétition
 //  - Ajout/suppression favoris (Firestore)
-//  - Tracking stats : écoutes + minutes → StatsService
 // ============================================================
 
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/sourate_model.dart';
 import '../services/quran_service.dart';
-import '../services/stats_service.dart';
 import '../widgets/app_theme.dart';
 
 class PlayerScreen extends StatefulWidget {
@@ -27,7 +24,6 @@ class PlayerScreen extends StatefulWidget {
 
 class _PlayerScreenState extends State<PlayerScreen> {
   final _quranService = QuranService();
-  final _statsService = StatsService();
   final _player       = AudioPlayer();
 
   List<Sourate> _sourates        = [];
@@ -47,10 +43,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
   // Favoris (ids)
   Set<int> _favorisIds = {};
 
-  // ── Tracking minutes d'écoute ─────────────────────────────────────────────
-  Timer? _minuteTimer;         // déclenché toutes les 60s pendant la lecture
-  Duration _positionAuDemarrage = Duration.zero; // pour détecter les seeks
-
   @override
   void initState() {
     super.initState();
@@ -61,7 +53,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
-    _minuteTimer?.cancel();
     _player.dispose();
     super.dispose();
   }
@@ -89,15 +80,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   // ── Listeners audio ───────────────────────────────────────────────────────
   void _setupPlayerListeners() {
     _player.playingStream.listen((playing) {
-      if (mounted) {
-        setState(() => _isPlaying = playing);
-        // Démarrer ou arrêter le timer selon l'état de lecture
-        if (playing) {
-          _demarrerTimerMinutes();
-        } else {
-          _arreterTimerMinutes();
-        }
-      }
+      if (mounted) setState(() => _isPlaying = playing);
     });
 
     _player.positionStream.listen((pos) {
@@ -117,51 +100,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
           _player.seek(Duration.zero);
           _player.play();
         }
-        // Si terminé sans répétition → arrêter le timer
-        if (state == ProcessingState.completed && !_isRepeat) {
-          _arreterTimerMinutes();
-        }
       }
     });
-  }
-
-  // ── Timer minutes d'écoute ────────────────────────────────────────────────
-  void _demarrerTimerMinutes() {
-    _minuteTimer?.cancel();
-    _minuteTimer = Timer.periodic(const Duration(seconds: 60), (_) {
-      final s = _sourrenteSourate;
-      if (s != null && _isPlaying) {
-        _statsService.enregistrerMinute(
-          numeroSourate: s.numero,
-          nomSourate: s.nomAnglais,
-        );
-      }
-    });
-  }
-
-  void _arreterTimerMinutes() {
-    _minuteTimer?.cancel();
-    _minuteTimer = null;
   }
 
   // ── Actions lecteur ───────────────────────────────────────────────────────
   Future<void> _jouerSourate(Sourate s) async {
     if (s.audioUrl == null) return;
     try {
-      // Si c'est une nouvelle sourate (pas juste un play/pause)
-      final estNouvelleSourate = _sourrenteSourate?.numero != s.numero;
-
       setState(() { _sourrenteSourate = s; _isBuffering = true; });
       await _player.setUrl(s.audioUrl!);
       await _player.play();
-
-      // Enregistrer 1 écoute uniquement quand on change de sourate
-      if (estNouvelleSourate) {
-        _statsService.enregistrerEcoute(
-          numeroSourate: s.numero,
-          nomSourate: s.nomAnglais,
-        );
-      }
     } catch (e) {
       if (mounted) showSnackbar(context, 'Erreur de lecture. Réessayez.');
     }
@@ -282,35 +231,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final cats = ['Toutes', ..._categories];
     return SizedBox(
       height: 40,
-      child: ListView.builder(
+      child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 24),
         itemCount: cats.length,
-        itemBuilder: (context, i) {
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
           final cat = cats[i];
-          final isSelected = (cat == 'Toutes' && _categorieSelectionnee == null) ||
+          final selected = (i == 0 && _categorieSelectionnee == null) ||
               cat == _categorieSelectionnee;
           return GestureDetector(
             onTap: () => setState(() =>
-                _categorieSelectionnee = cat == 'Toutes' ? null : cat),
+                _categorieSelectionnee = i == 0 ? null : cat),
             child: Container(
-              margin: const EdgeInsets.only(right: 8),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
-                color: isSelected ? AppColors.primary : AppColors.card,
+                color: selected ? AppColors.primary : AppColors.card,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                  color: isSelected ? AppColors.primary : AppColors.border,
-                ),
+                    color: selected ? AppColors.primary : AppColors.border),
               ),
               child: Text(cat,
                   style: GoogleFonts.syne(
-                    color: isSelected
+                    color: selected
                         ? Colors.white
                         : AppColors.textSecondary,
                     fontSize: 12,
-                    fontWeight:
-                        isSelected ? FontWeight.w700 : FontWeight.w400,
+                    fontWeight: FontWeight.w600,
                   )),
             ),
           );
@@ -327,14 +274,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (_erreur != null) {
       return Center(
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const Icon(Icons.wifi_off_rounded,
                 color: AppColors.textSecondary, size: 48),
             const SizedBox(height: 12),
             Text(_erreur!,
-                style: GoogleFonts.syne(
-                    color: AppColors.textSecondary, fontSize: 14)),
+                style: GoogleFonts.syne(color: AppColors.textSecondary)),
             const SizedBox(height: 16),
             TextButton(
               onPressed: () {
@@ -351,29 +297,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     final liste = _souratesFiltrees;
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 8),
       itemCount: liste.length,
-      itemBuilder: (context, i) => _buildSourateItem(liste[i]),
+      itemBuilder: (_, i) => _buildSourateItem(liste[i]),
     );
   }
 
   Widget _buildSourateItem(Sourate s) {
-    final estActive = _sourrenteSourate?.numero == s.numero;
-    final estFavori = _favorisIds.contains(s.numero);
+    final estActive  = _sourrenteSourate?.numero == s.numero;
+    final estFavori  = _favorisIds.contains(s.numero);
 
     return GestureDetector(
       onTap: () => _jouerSourate(s),
       child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: estActive
-              ? AppColors.primary.withValues(alpha: 0.12)
+              ? AppColors.primary.withValues(alpha: 0.15)
               : AppColors.card,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
             color: estActive ? AppColors.primary : AppColors.border,
-            width: estActive ? 1.5 : 1,
           ),
         ),
         child: Row(
@@ -388,12 +333,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Center(
-                  child: Text('${s.numero}',
+                child: Text('${s.numero}',
                     style: GoogleFonts.syne(
                       color: estActive
                           ? Colors.white
                           : AppColors.textSecondary,
-                      fontSize: 13,
+                      fontSize: 12,
                       fontWeight: FontWeight.w700,
                     )),
               ),
