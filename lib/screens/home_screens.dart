@@ -1,182 +1,189 @@
 // ============================================================
-//  lib/screens/home_screens.dart
-//  Écran principal avec navigation entre :
-//  - Page Statistiques
-//  - Page Lecteur Audio
+//  lib/screens/player_screen.dart
+//  Lecteur audio Quran :
+//  - Liste catégories (Mecquoises / Médinoises) → sourates
+//  - Mini lecteur fixe en bas
+//  - Lecture en arrière-plan via just_audio
+//  - Lecture / Pause / Répétition
+//  - Ajout/suppression favoris (Firestore)
 // ============================================================
 
 import 'package:flutter/material.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../models/sourate_model.dart';
+import '../services/quran_service.dart';
 import '../widgets/app_theme.dart';
-import 'player_screen.dart';
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
-
-  @override
-  State<HomeScreen> createState() => _HomeScreenState();
-}
-
-class _HomeScreenState extends State<HomeScreen> {
-  int _currentIndex = 0;
-
-  final List<Widget> _pages = const [
-    _StatistiquesPage(),
-    PlayerScreen(),
-  ];
+class PlayerScreen extends StatefulWidget {
+  const PlayerScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: IndexedStack(
-        // IndexedStack garde les pages en mémoire → pas de rechargement
-        // quand on revient sur la page stats ou player
-        index: _currentIndex,
-        children: _pages,
-      ),
-      bottomNavigationBar: _buildBottomNav(),
-    );
-  }
-
-  Widget _buildBottomNav() {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        border: Border(top: BorderSide(color: AppColors.border)),
-      ),
-      child: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: (i) => setState(() => _currentIndex = i),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        selectedItemColor: AppColors.primary,
-        unselectedItemColor: AppColors.textSecondary,
-        selectedLabelStyle: GoogleFonts.syne(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-        ),
-        unselectedLabelStyle: GoogleFonts.syne(fontSize: 11),
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.bar_chart_rounded),
-            activeIcon: Icon(Icons.bar_chart_rounded),
-            label: 'Statistiques',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.headphones_outlined),
-            activeIcon: Icon(Icons.headphones_rounded),
-            label: 'Lecteur',
-          ),
-        ],
-      ),
-    );
-  }
+  State<PlayerScreen> createState() => _PlayerScreenState();
 }
 
-// ============================================================
-//  Page Statistiques (anciennement HomeScreen)
-// ============================================================
-class _StatistiquesPage extends StatefulWidget {
-  const _StatistiquesPage();
+class _PlayerScreenState extends State<PlayerScreen> {
+  final _quranService = QuranService();
+  final _player       = AudioPlayer();
 
-  @override
-  State<_StatistiquesPage> createState() => _StatistiquesPageState();
-}
+  List<Sourate> _sourates        = [];
+  bool _loadingData              = true;
+  String? _erreur;
 
-class _StatistiquesPageState extends State<_StatistiquesPage> {
-  final _auth = FirebaseAuth.instance;
-  final _db   = FirebaseFirestore.instance;
+  Sourate? _sourrenteSourate;
+  bool _isPlaying   = false;
+  bool _isRepeat    = false;
+  bool _isBuffering = false;
+  Duration _position  = Duration.zero;
+  Duration _duration  = Duration.zero;
 
-  String _prenom = '';
-  String _nom    = '';
-  int _objectif  = 20;
-  bool _loading  = true;
+  // Catégorie sélectionnée : null = toutes
+  String? _categorieSelectionnee;
 
-  final List<int> _minutesParJour = [
-    12, 0, 45, 30, 0, 60, 25, 0, 90, 15,
-    0, 40, 55, 20, 0, 70, 35, 0, 50, 80,
-    0, 25, 60, 45, 0, 30, 55, 0, 40, 20,
-  ];
-
-  final List<Map<String, dynamic>> _topMorceaux = [
-    {'titre': 'Sourate Al-Fatiha',   'artiste': 'Mishary Rashid',   'minutes': 45,  'ecoutes': 12},
-    {'titre': 'Sourate Al-Baqarah',  'artiste': 'Abdul Basit',      'minutes': 120, 'ecoutes': 8},
-    {'titre': 'Sourate Al-Kahf',     'artiste': 'Maher Al Muaiqly', 'minutes': 60,  'ecoutes': 6},
-    {'titre': 'Sourate Yasin',       'artiste': 'Saud Al-Shuraim',  'minutes': 35,  'ecoutes': 5},
-    {'titre': 'Sourate Al-Mulk',     'artiste': 'Mishary Rashid',   'minutes': 20,  'ecoutes': 4},
-  ];
+  // Favoris (ids)
+  Set<int> _favorisIds = {};
 
   @override
   void initState() {
     super.initState();
-    _loadProfil();
+    _loadSourates();
+    _setupPlayerListeners();
+    _loadFavorisIds();
   }
-
-  Future<void> _loadProfil() async {
-    final uid = _auth.currentUser?.uid;
-    if (uid == null) return;
-    try {
-      final doc = await _db.collection('users').doc(uid).get();
-      final data = doc.data();
-      if (data != null && mounted) {
-        setState(() {
-          _prenom   = data['prenom'] ?? '';
-          _nom      = data['nom']    ?? '';
-          _objectif = data['objectifMensuel'] ?? 20;
-          _loading  = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _updateObjectif(int val) async {
-    final uid = _auth.currentUser?.uid;
-    if (uid == null) return;
-    setState(() => _objectif = val);
-    await _db.collection('users').doc(uid).update({'objectifMensuel': val});
-  }
-
-  int get _totalMinutes => _minutesParJour.fold(0, (a, b) => a + b);
-  int get _totalHeures  => _totalMinutes ~/ 60;
-  int get _restMinutes  => _totalMinutes % 60;
-  double get _progression =>
-      (_totalMinutes / (_objectif * 60)).clamp(0.0, 1.0);
-  int get _joursActifs =>
-      _minutesParJour.where((m) => m > 0).length;
-  int get _maxMinutes =>
-      _minutesParJour.reduce((a, b) => a > b ? a : b);
-  int get _nbJoursMois {
-    final now = DateTime.now();
-    return DateTime(now.year, now.month + 1, 0).day;
-  }
-  List<int> get _joursAffiches =>
-      _minutesParJour.take(_nbJoursMois).toList();
 
   @override
-  Widget build(BuildContext context) {
-    if (_loading) {
-      return const Scaffold(
-        backgroundColor: AppColors.background,
-        body: Center(child: CircularProgressIndicator(color: AppColors.primary)),
-      );
-    }
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
 
+  // ── Chargement ────────────────────────────────────────────────────────────
+  Future<void> _loadSourates() async {
+    try {
+      final sourates = await _quranService.getSourates();
+      if (mounted) setState(() { _sourates = sourates; _loadingData = false; });
+    } catch (e) {
+      if (mounted) setState(() { _erreur = 'Impossible de charger les sourates.'; _loadingData = false; });
+    }
+  }
+
+  Future<void> _loadFavorisIds() async {
+    _quranService.getFavorisStream().listen((favoris) {
+      if (mounted) {
+        setState(() {
+          _favorisIds = favoris.map((f) => f.numeroSourate).toSet();
+        });
+      }
+    });
+  }
+
+  // ── Listeners audio ───────────────────────────────────────────────────────
+  void _setupPlayerListeners() {
+    _player.playingStream.listen((playing) {
+      if (mounted) setState(() => _isPlaying = playing);
+    });
+
+    _player.positionStream.listen((pos) {
+      if (mounted) setState(() => _position = pos);
+    });
+
+    _player.durationStream.listen((dur) {
+      if (mounted && dur != null) setState(() => _duration = dur);
+    });
+
+    _player.processingStateStream.listen((state) {
+      if (mounted) {
+        setState(() => _isBuffering = state == ProcessingState.buffering ||
+            state == ProcessingState.loading);
+        // Si terminé + répétition → rejouer
+        if (state == ProcessingState.completed && _isRepeat) {
+          _player.seek(Duration.zero);
+          _player.play();
+        }
+      }
+    });
+  }
+
+  // ── Actions lecteur ───────────────────────────────────────────────────────
+  Future<void> _jouerSourate(Sourate s) async {
+    if (s.audioUrl == null) return;
+    try {
+      setState(() { _sourrenteSourate = s; _isBuffering = true; });
+      await _player.setUrl(s.audioUrl!);
+      await _player.play();
+    } catch (e) {
+      if (mounted) showSnackbar(context, 'Erreur de lecture. Réessayez.');
+    }
+  }
+
+  void _togglePlayPause() {
+    if (_isPlaying) {
+      _player.pause();
+    } else {
+      _player.play();
+    }
+  }
+
+  void _toggleRepeat() {
+    setState(() => _isRepeat = !_isRepeat);
+    _player.setLoopMode(_isRepeat ? LoopMode.one : LoopMode.off);
+  }
+
+  void _seek(double val) {
+    final pos = Duration(seconds: val.toInt());
+    _player.seek(pos);
+  }
+
+  // ── Favoris ───────────────────────────────────────────────────────────────
+  Future<void> _toggleFavori(Sourate s) async {
+    try {
+      if (_favorisIds.contains(s.numero)) {
+        await _quranService.supprimerFavori(s.numero);
+        if (mounted) showSnackbar(context, '${s.nomAnglais} retiré des favoris.', isError: false);
+      } else {
+        await _quranService.ajouterFavori(s);
+        if (mounted) showSnackbar(context, '${s.nomAnglais} ajouté aux favoris !', isError: false);
+      }
+    } catch (e) {
+      if (mounted) showSnackbar(context, 'Erreur. Réessayez.');
+    }
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  String _formatDuration(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  List<Sourate> get _souratesFiltrees {
+    if (_categorieSelectionnee == null) return _sourates;
+    return _sourates.where((s) => s.categorie == _categorieSelectionnee).toList();
+  }
+
+  List<String> get _categories {
+    return _sourates.map((s) => s.categorie).toSet().toList();
+  }
+
+  // ── BUILD ─────────────────────────────────────────────────────────────────
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: CustomScrollView(
-          slivers: [
-            SliverToBoxAdapter(child: _buildHeader()),
-            SliverToBoxAdapter(child: _buildStatsGlobales()),
-            SliverToBoxAdapter(child: _buildObjectif()),
-            SliverToBoxAdapter(child: _buildHistogramme()),
-            SliverToBoxAdapter(child: _buildTopMorceaux()),
-            const SliverToBoxAdapter(child: SizedBox(height: 16)),
+        child: Column(
+          children: [
+            // ── En-tête ─────────────────────────────────────────────────
+            _buildHeader(),
+
+            // ── Filtres catégories ───────────────────────────────────────
+            if (!_loadingData && _erreur == null) _buildCategories(),
+
+            // ── Liste sourates ───────────────────────────────────────────
+            Expanded(child: _buildBody()),
+
+            // ── Mini lecteur fixe en bas ─────────────────────────────────
+            if (_sourrenteSourate != null) _buildMiniPlayer(),
           ],
         ),
       ),
@@ -184,406 +191,380 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
   }
 
   Widget _buildHeader() {
-    final now = DateTime.now();
-    final mois = ['','Janvier','Février','Mars','Avril','Mai','Juin',
-        'Juillet','Août','Septembre','Octobre','Novembre','Décembre'][now.month];
-    return Container(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('$mois ${now.year}',
-                    style: GoogleFonts.syne(
-                        color: AppColors.textSecondary,
-                        fontSize: 13,
-                        letterSpacing: 2)),
-                const SizedBox(height: 4),
-                RichText(
-                  text: TextSpan(
-                    text: 'Bonjour, ',
-                    style: GoogleFonts.syne(
-                        color: AppColors.textSecondary, fontSize: 22),
-                    children: [
-                      TextSpan(
-                        text: '$_prenom $_nom',
-                        style: GoogleFonts.syne(
-                            color: AppColors.textPrimary,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          GestureDetector(
-            onTap: () => _auth.signOut(),
-            child: Container(
-              width: 42, height: 42,
-              decoration: BoxDecoration(
-                color: AppColors.card,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: const Icon(Icons.logout_rounded,
-                  color: AppColors.textSecondary, size: 18),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatsGlobales() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
       child: Row(
         children: [
-          Expanded(child: _statCard(
-            icon: Icons.headphones_rounded,
-            label: 'Temps total',
-            value: '${_totalHeures}h ${_restMinutes}min',
-            color: AppColors.primary,
-          )),
-          const SizedBox(width: 12),
-          Expanded(child: _statCard(
-            icon: Icons.calendar_today_rounded,
-            label: 'Jours actifs',
-            value: '$_joursActifs jours',
-            color: AppColors.accent,
-          )),
-        ],
-      ),
-    );
-  }
-
-  Widget _statCard({required IconData icon, required String label,
-      required String value, required Color color}) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 36, height: 36,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: color, size: 18),
-          ),
-          const SizedBox(height: 12),
-          Text(value,
-              style: GoogleFonts.syne(
-                  color: AppColors.textPrimary,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800)),
-          const SizedBox(height: 2),
-          Text(label,
-              style: GoogleFonts.syne(
-                  color: AppColors.textSecondary, fontSize: 11)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildObjectif() {
-    final pct = (_progression * 100).toInt();
-    return Container(
-      margin: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Objectif mensuel',
+              Text('القرآن الكريم',
+                  style: GoogleFonts.syne(
+                      color: AppColors.accent,
+                      fontSize: 13,
+                      letterSpacing: 2)),
+              Text('Lecteur Audio',
                   style: GoogleFonts.syne(
                       color: AppColors.textPrimary,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700)),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<int>(
-                    value: _objectif,
-                    isDense: true,
-                    dropdownColor: AppColors.surface,
-                    style: GoogleFonts.syne(
-                        color: AppColors.primary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700),
-                    icon: const Icon(Icons.keyboard_arrow_down_rounded,
-                        color: AppColors.primary, size: 16),
-                    items: [5, 10, 15, 20, 25, 30, 40, 50]
-                        .map((h) => DropdownMenuItem(
-                            value: h, child: Text('$h heures')))
-                        .toList(),
-                    onChanged: (v) => v != null ? _updateObjectif(v) : null,
-                  ),
-                ),
-              ),
+                      fontSize: 24,
+                      fontWeight: FontWeight.w800)),
             ],
           ),
-          const SizedBox(height: 16),
-          Stack(
-            children: [
-              Container(
-                height: 10,
-                decoration: BoxDecoration(
-                  color: AppColors.border,
-                  borderRadius: BorderRadius.circular(5),
-                ),
-              ),
-              FractionallySizedBox(
-                widthFactor: _progression,
-                child: Container(
-                  height: 10,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                        colors: [AppColors.primary, AppColors.accent]),
-                    borderRadius: BorderRadius.circular(5),
-                  ),
-                ),
-              ),
-            ],
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Text('${_sourates.length} sourates',
+                style: GoogleFonts.syne(
+                    color: AppColors.textSecondary, fontSize: 12)),
           ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Text('${_totalHeures}h ${_restMinutes}min écoutées',
-                  style: GoogleFonts.syne(
-                      color: AppColors.textSecondary, fontSize: 12)),
-              const Spacer(),
-              Text('$pct%',
-                  style: GoogleFonts.syne(
-                    color: _progression >= 1.0
-                        ? AppColors.accent
-                        : AppColors.primary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                  )),
-            ],
-          ),
-          if (_progression >= 1.0) ...[
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCategories() {
+    final cats = ['Toutes', ..._categories];
+    return SizedBox(
+      height: 40,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        itemCount: cats.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          final cat = cats[i];
+          final selected = (i == 0 && _categorieSelectionnee == null) ||
+              cat == _categorieSelectionnee;
+          return GestureDetector(
+            onTap: () => setState(() =>
+                _categorieSelectionnee = i == 0 ? null : cat),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
-                color: AppColors.accent.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(8),
+                color: selected ? AppColors.primary : AppColors.card,
+                borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                    color: AppColors.accent.withValues(alpha: 0.3)),
+                    color: selected ? AppColors.primary : AppColors.border),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
+              child: Text(cat,
+                  style: GoogleFonts.syne(
+                    color: selected
+                        ? Colors.white
+                        : AppColors.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  )),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loadingData) {
+      return const Center(
+          child: CircularProgressIndicator(color: AppColors.primary));
+    }
+    if (_erreur != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.wifi_off_rounded,
+                color: AppColors.textSecondary, size: 48),
+            const SizedBox(height: 12),
+            Text(_erreur!,
+                style: GoogleFonts.syne(color: AppColors.textSecondary)),
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: () {
+                setState(() { _loadingData = true; _erreur = null; });
+                _loadSourates();
+              },
+              child: Text('Réessayer',
+                  style: GoogleFonts.syne(color: AppColors.primary)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final liste = _souratesFiltrees;
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 8),
+      itemCount: liste.length,
+      itemBuilder: (_, i) => _buildSourateItem(liste[i]),
+    );
+  }
+
+  Widget _buildSourateItem(Sourate s) {
+    final estActive  = _sourrenteSourate?.numero == s.numero;
+    final estFavori  = _favorisIds.contains(s.numero);
+
+    return GestureDetector(
+      onTap: () => _jouerSourate(s),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: estActive
+              ? AppColors.primary.withValues(alpha: 0.15)
+              : AppColors.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: estActive ? AppColors.primary : AppColors.border,
+          ),
+        ),
+        child: Row(
+          children: [
+            // Numéro
+            Container(
+              width: 40, height: 40,
+              decoration: BoxDecoration(
+                color: estActive
+                    ? AppColors.primary
+                    : AppColors.surface,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Center(
+                child: Text('${s.numero}',
+                    style: GoogleFonts.syne(
+                      color: estActive
+                          ? Colors.white
+                          : AppColors.textSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    )),
+              ),
+            ),
+            const SizedBox(width: 12),
+
+            // Infos
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.check_circle_rounded,
-                      color: AppColors.accent, size: 14),
-                  const SizedBox(width: 6),
-                  Text('Objectif atteint ! 🎉',
-                      style: GoogleFonts.syne(
-                          color: AppColors.accent,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700)),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(s.nomAnglais,
+                            style: GoogleFonts.syne(
+                              color: estActive
+                                  ? AppColors.primary
+                                  : AppColors.textPrimary,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            )),
+                      ),
+                      Text(s.nom,
+                          style: const TextStyle(
+                            color: AppColors.accent,
+                            fontSize: 16,
+                            fontFamily: 'serif',
+                          )),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      Text(s.traduction,
+                          style: GoogleFonts.syne(
+                              color: AppColors.textSecondary,
+                              fontSize: 11)),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: s.type == 'Meccan'
+                              ? AppColors.primary.withValues(alpha: 0.15)
+                              : AppColors.accent.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(s.categorie,
+                            style: GoogleFonts.syne(
+                              color: s.type == 'Meccan'
+                                  ? AppColors.primaryLight
+                                  : AppColors.accent,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                            )),
+                      ),
+                      const Spacer(),
+                      Text('${s.nbVersets} v.',
+                          style: GoogleFonts.syne(
+                              color: AppColors.textSecondary,
+                              fontSize: 10)),
+                    ],
+                  ),
                 ],
               ),
             ),
+
+            const SizedBox(width: 8),
+
+            // Bouton favori
+            GestureDetector(
+              onTap: () => _toggleFavori(s),
+              child: Icon(
+                estFavori ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                color: estFavori ? AppColors.error : AppColors.textSecondary,
+                size: 20,
+              ),
+            ),
+
+            const SizedBox(width: 8),
+
+            // Icône lecture
+            if (estActive && _isPlaying)
+              const Icon(Icons.equalizer_rounded,
+                  color: AppColors.primary, size: 20)
+            else
+              const Icon(Icons.play_circle_outline_rounded,
+                  color: AppColors.textSecondary, size: 20),
           ],
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildHistogramme() {
-    final jours = _joursAffiches;
-    final now   = DateTime.now();
+  // ── Mini lecteur en bas ───────────────────────────────────────────────────
+  Widget _buildMiniPlayer() {
+    final s = _sourrenteSourate!;
+    final maxSec = _duration.inSeconds.toDouble();
+    final curSec = _position.inSeconds.toDouble().clamp(0.0, maxSec > 0 ? maxSec : 1.0);
+
     return Container(
-      margin: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
+        color: AppColors.surface,
+        border: Border(top: BorderSide(color: AppColors.border)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.4),
+            blurRadius: 20,
+            offset: const Offset(0, -4),
+          ),
+        ],
       ),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text('Minutes écoutées ce mois',
-              style: GoogleFonts.syne(
-                  color: AppColors.textPrimary,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700)),
-          const SizedBox(height: 4),
-          Text('Chaque barre = 1 jour',
-              style: GoogleFonts.syne(
-                  color: AppColors.textSecondary, fontSize: 11)),
-          const SizedBox(height: 20),
-          SizedBox(
-            height: 120,
+          // Barre de progression
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 3,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+              activeTrackColor: AppColors.primary,
+              inactiveTrackColor: AppColors.border,
+              thumbColor: AppColors.primary,
+              overlayColor: AppColors.primary.withValues(alpha: 0.2),
+            ),
+            child: Slider(
+              value: curSec,
+              min: 0,
+              max: maxSec > 0 ? maxSec : 1.0,
+              onChanged: _seek,
+            ),
+          ),
+
+          // Temps
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: List.generate(jours.length, (i) {
-                final isToday = (i + 1) == now.day;
-                final ratio = _maxMinutes > 0
-                    ? jours[i] / _maxMinutes
-                    : 0.0;
-                return Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 1.5),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Flexible(
-                          child: FractionallySizedBox(
-                            heightFactor: ratio > 0
-                                ? ratio.clamp(0.05, 1.0)
-                                : 0.03,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: isToday
-                                    ? AppColors.accent
-                                    : ratio > 0
-                                        ? AppColors.primary.withValues(
-                                            alpha: 0.7 + ratio * 0.3)
-                                        : AppColors.border,
-                                borderRadius: BorderRadius.circular(3),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              }),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: List.generate(jours.length, (i) {
-              final show = (i + 1) == 1 ||
-                  (i + 1) % 5 == 0 ||
-                  (i + 1) == jours.length;
-              return Expanded(
-                child: Text(
-                  show ? '${i + 1}' : '',
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.syne(
-                    color: (i + 1) == now.day
-                        ? AppColors.accent
-                        : AppColors.textSecondary,
-                    fontSize: 9,
-                  ),
-                ),
-              );
-            }),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTopMorceaux() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Morceaux les plus écoutés',
-              style: GoogleFonts.syne(
-                  color: AppColors.textPrimary,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700)),
-          const SizedBox(height: 16),
-          ...List.generate(_topMorceaux.length,
-              (i) => _morceauRow(i + 1, _topMorceaux[i])),
-        ],
-      ),
-    );
-  }
-
-  Widget _morceauRow(int rang, Map<String, dynamic> m) {
-    final colors = [
-      AppColors.accent, AppColors.primary, AppColors.primaryLight,
-      AppColors.textSecondary, AppColors.textSecondary,
-    ];
-    final color = colors[rang - 1];
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 28,
-            child: Text('#$rang',
-                style: GoogleFonts.syne(
-                    color: color,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800)),
-          ),
-          Container(
-            width: 40, height: 40,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(Icons.music_note_rounded, color: color, size: 18),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(m['titre'],
+                Text(_formatDuration(_position),
                     style: GoogleFonts.syne(
-                        color: AppColors.textPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis),
-                Text(m['artiste'],
+                        color: AppColors.textSecondary, fontSize: 10)),
+                const Spacer(),
+                Text(_formatDuration(_duration),
                     style: GoogleFonts.syne(
-                        color: AppColors.textSecondary, fontSize: 11)),
+                        color: AppColors.textSecondary, fontSize: 10)),
               ],
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
+
+          const SizedBox(height: 8),
+
+          Row(
             children: [
-              Text('${m['ecoutes']}x',
-                  style: GoogleFonts.syne(
-                      color: AppColors.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700)),
-              Text('${m['minutes']} min',
-                  style: GoogleFonts.syne(
-                      color: AppColors.textSecondary, fontSize: 10)),
+              // Infos sourate
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(s.nomAnglais,
+                        style: GoogleFonts.syne(
+                          color: AppColors.textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                    Text(s.traduction,
+                        style: GoogleFonts.syne(
+                            color: AppColors.textSecondary, fontSize: 11)),
+                  ],
+                ),
+              ),
+
+              // Bouton répétition
+              IconButton(
+                onPressed: _toggleRepeat,
+                icon: Icon(
+                  Icons.repeat_one_rounded,
+                  color: _isRepeat ? AppColors.accent : AppColors.textSecondary,
+                  size: 22,
+                ),
+              ),
+
+              // Bouton play/pause
+              GestureDetector(
+                onTap: _togglePlayPause,
+                child: Container(
+                  width: 48, height: 48,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    shape: BoxShape.circle,
+                  ),
+                  child: _isBuffering
+                      ? const Padding(
+                          padding: EdgeInsets.all(14),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation(Colors.white),
+                          ),
+                        )
+                      : Icon(
+                          _isPlaying
+                              ? Icons.pause_rounded
+                              : Icons.play_arrow_rounded,
+                          color: Colors.white,
+                          size: 26,
+                        ),
+                ),
+              ),
+
+              // Bouton favori
+              IconButton(
+                onPressed: () => _toggleFavori(s),
+                icon: Icon(
+                  _favorisIds.contains(s.numero)
+                      ? Icons.favorite_rounded
+                      : Icons.favorite_border_rounded,
+                  color: _favorisIds.contains(s.numero)
+                      ? AppColors.error
+                      : AppColors.textSecondary,
+                  size: 22,
+                ),
+              ),
             ],
           ),
         ],
