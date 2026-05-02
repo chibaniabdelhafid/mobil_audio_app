@@ -1,11 +1,7 @@
-<<<<<<< Updated upstream
-import 'package:flutter/material.dart';
-class HomeScreen extends StatelessWidget {
-=======
 // ============================================================
 //  lib/screens/home_screens.dart
 //  Écran principal avec navigation entre :
-//  - Page Statistiques (données réelles depuis Firestore)
+//  - Page Statistiques
 //  - Page Lecteur Audio
 // ============================================================
 
@@ -14,22 +10,30 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../widgets/app_theme.dart';
-import '../services/stats_service.dart';
 import 'player_screen.dart';
 
 class HomeScreen extends StatefulWidget {
->>>>>>> Stashed changes
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int _currentIndex = 0;
+
+  final List<Widget> _pages = const [
+    _StatistiquesPage(),
+    PlayerScreen(),
+  ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-<<<<<<< Updated upstream
-      appBar: AppBar(title: const Text('Home')),
-      body: const Center(child: Text('Welcome!')),
-=======
       backgroundColor: AppColors.background,
       body: IndexedStack(
+        // IndexedStack garde les pages en mémoire → pas de rechargement
+        // quand on revient sur la page stats ou player
         index: _currentIndex,
         children: _pages,
       ),
@@ -73,7 +77,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 // ============================================================
-//  Page Statistiques — données réelles depuis Firestore
+//  Page Statistiques (anciennement HomeScreen)
 // ============================================================
 class _StatistiquesPage extends StatefulWidget {
   const _StatistiquesPage();
@@ -83,28 +87,34 @@ class _StatistiquesPage extends StatefulWidget {
 }
 
 class _StatistiquesPageState extends State<_StatistiquesPage> {
-  final _auth         = FirebaseAuth.instance;
-  final _db           = FirebaseFirestore.instance;
-  final _statsService = StatsService();
+  final _auth = FirebaseAuth.instance;
+  final _db   = FirebaseFirestore.instance;
 
   String _prenom = '';
   String _nom    = '';
   int _objectif  = 20;
   bool _loading  = true;
 
-  // Données dynamiques depuis Firestore
-  List<int> _minutesParJour              = [];
-  List<Map<String, dynamic>> _topMorceaux = [];
-  bool _loadingStats = true;
+  final List<int> _minutesParJour = [
+    12, 0, 45, 30, 0, 60, 25, 0, 90, 15,
+    0, 40, 55, 20, 0, 70, 35, 0, 50, 80,
+    0, 25, 60, 45, 0, 30, 55, 0, 40, 20,
+  ];
+
+  final List<Map<String, dynamic>> _topMorceaux = [
+    {'titre': 'Sourate Al-Fatiha',   'artiste': 'Mishary Rashid',   'minutes': 45,  'ecoutes': 12},
+    {'titre': 'Sourate Al-Baqarah',  'artiste': 'Abdul Basit',      'minutes': 120, 'ecoutes': 8},
+    {'titre': 'Sourate Al-Kahf',     'artiste': 'Maher Al Muaiqly', 'minutes': 60,  'ecoutes': 6},
+    {'titre': 'Sourate Yasin',       'artiste': 'Saud Al-Shuraim',  'minutes': 35,  'ecoutes': 5},
+    {'titre': 'Sourate Al-Mulk',     'artiste': 'Mishary Rashid',   'minutes': 20,  'ecoutes': 4},
+  ];
 
   @override
   void initState() {
     super.initState();
     _loadProfil();
-    _loadStats();
   }
 
-  // ── Chargement profil ─────────────────────────────────────────────────────
   Future<void> _loadProfil() async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return;
@@ -124,30 +134,6 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
     }
   }
 
-  // ── Chargement stats depuis Firestore ─────────────────────────────────────
-  Future<void> _loadStats() async {
-    try {
-      final minutes = await _statsService.getMinutesParJourMoisEnCours();
-      final top     = await _statsService.getTopSourates(limit: 5);
-      if (mounted) {
-        setState(() {
-          _minutesParJour = minutes;
-          _topMorceaux    = top;
-          _loadingStats   = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) {
-        // En cas d'erreur on affiche des zéros plutôt que de planter
-        setState(() {
-          _minutesParJour = List.filled(_nbJoursMois, 0);
-          _topMorceaux    = [];
-          _loadingStats   = false;
-        });
-      }
-    }
-  }
-
   Future<void> _updateObjectif(int val) async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return;
@@ -155,9 +141,7 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
     await _db.collection('users').doc(uid).update({'objectifMensuel': val});
   }
 
-  // ── Calculs ───────────────────────────────────────────────────────────────
-  int get _totalMinutes =>
-      _minutesParJour.isEmpty ? 0 : _minutesParJour.fold(0, (a, b) => a + b);
+  int get _totalMinutes => _minutesParJour.fold(0, (a, b) => a + b);
   int get _totalHeures  => _totalMinutes ~/ 60;
   int get _restMinutes  => _totalMinutes % 60;
   double get _progression =>
@@ -165,17 +149,14 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
   int get _joursActifs =>
       _minutesParJour.where((m) => m > 0).length;
   int get _maxMinutes =>
-      _minutesParJour.isEmpty ? 1 : _minutesParJour.reduce((a, b) => a > b ? a : b);
+      _minutesParJour.reduce((a, b) => a > b ? a : b);
   int get _nbJoursMois {
     final now = DateTime.now();
     return DateTime(now.year, now.month + 1, 0).day;
   }
-  List<int> get _joursAffiches {
-    if (_minutesParJour.isEmpty) return List.filled(_nbJoursMois, 0);
-    return _minutesParJour.take(_nbJoursMois).toList();
-  }
+  List<int> get _joursAffiches =>
+      _minutesParJour.take(_nbJoursMois).toList();
 
-  // ── BUILD ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -188,37 +169,20 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: RefreshIndicator(
-          color: AppColors.primary,
-          backgroundColor: AppColors.card,
-          onRefresh: () async {
-            setState(() => _loadingStats = true);
-            await _loadStats();
-          },
-          child: CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(child: _buildHeader()),
-              SliverToBoxAdapter(child: _buildStatsGlobales()),
-              SliverToBoxAdapter(child: _buildObjectif()),
-              SliverToBoxAdapter(
-                child: _loadingStats
-                    ? _buildSkeletonHistogramme()
-                    : _buildHistogramme(),
-              ),
-              SliverToBoxAdapter(
-                child: _loadingStats
-                    ? _buildSkeletonTop()
-                    : _buildTopMorceaux(),
-              ),
-              const SliverToBoxAdapter(child: SizedBox(height: 16)),
-            ],
-          ),
+        child: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(child: _buildHeader()),
+            SliverToBoxAdapter(child: _buildStatsGlobales()),
+            SliverToBoxAdapter(child: _buildObjectif()),
+            SliverToBoxAdapter(child: _buildHistogramme()),
+            SliverToBoxAdapter(child: _buildTopMorceaux()),
+            const SliverToBoxAdapter(child: SizedBox(height: 16)),
+          ],
         ),
       ),
     );
   }
 
-  // ── Header ────────────────────────────────────────────────────────────────
   Widget _buildHeader() {
     final now = DateTime.now();
     final mois = ['','Janvier','Février','Mars','Avril','Mai','Juin',
@@ -274,23 +238,22 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
     );
   }
 
-  // ── Stats globales ────────────────────────────────────────────────────────
   Widget _buildStatsGlobales() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Row(
         children: [
           Expanded(child: _statCard(
-            label: 'Écoute totale',
-            value: '${_totalHeures}h ${_restMinutes}min',
             icon: Icons.headphones_rounded,
+            label: 'Temps total',
+            value: '${_totalHeures}h ${_restMinutes}min',
             color: AppColors.primary,
           )),
           const SizedBox(width: 12),
           Expanded(child: _statCard(
-            label: 'Jours actifs',
-            value: '$_joursActifs j.',
             icon: Icons.calendar_today_rounded,
+            label: 'Jours actifs',
+            value: '$_joursActifs jours',
             color: AppColors.accent,
           )),
         ],
@@ -298,12 +261,8 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
     );
   }
 
-  Widget _statCard({
-    required String label,
-    required String value,
-    required IconData icon,
-    required Color color,
-  }) {
+  Widget _statCard({required IconData icon, required String label,
+      required String value, required Color color}) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -311,38 +270,32 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.border),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 38, height: 38,
+            width: 36, height: 36,
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(icon, color: color, size: 18),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(value,
-                    style: GoogleFonts.syne(
-                        color: AppColors.textPrimary,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800)),
-                Text(label,
-                    style: GoogleFonts.syne(
-                        color: AppColors.textSecondary, fontSize: 10)),
-              ],
-            ),
-          ),
+          const SizedBox(height: 12),
+          Text(value,
+              style: GoogleFonts.syne(
+                  color: AppColors.textPrimary,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800)),
+          const SizedBox(height: 2),
+          Text(label,
+              style: GoogleFonts.syne(
+                  color: AppColors.textSecondary, fontSize: 11)),
         ],
       ),
     );
   }
 
-  // ── Objectif mensuel ──────────────────────────────────────────────────────
   Widget _buildObjectif() {
     final pct = (_progression * 100).toInt();
     return Container(
@@ -364,37 +317,56 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
                       fontSize: 15,
                       fontWeight: FontWeight.w700)),
               const Spacer(),
-              // Dropdown objectif
-              DropdownButton<int>(
-                value: _objectif,
-                dropdownColor: AppColors.surface,
-                underline: const SizedBox(),
-                style: GoogleFonts.syne(
-                    color: AppColors.primary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700),
-                items: [5, 10, 15, 20, 25, 30, 40, 50]
-                    .map((h) => DropdownMenuItem(
-                          value: h,
-                          child: Text('$h h'),
-                        ))
-                    .toList(),
-                onChanged: (v) { if (v != null) _updateObjectif(v); },
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<int>(
+                    value: _objectif,
+                    isDense: true,
+                    dropdownColor: AppColors.surface,
+                    style: GoogleFonts.syne(
+                        color: AppColors.primary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700),
+                    icon: const Icon(Icons.keyboard_arrow_down_rounded,
+                        color: AppColors.primary, size: 16),
+                    items: [5, 10, 15, 20, 25, 30, 40, 50]
+                        .map((h) => DropdownMenuItem(
+                            value: h, child: Text('$h heures')))
+                        .toList(),
+                    onChanged: (v) => v != null ? _updateObjectif(v) : null,
+                  ),
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          // Barre de progression dégradée
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(
-              value: _progression,
-              minHeight: 10,
-              backgroundColor: AppColors.border,
-              valueColor: AlwaysStoppedAnimation(
-                _progression >= 1.0 ? AppColors.accent : AppColors.primary,
+          const SizedBox(height: 16),
+          Stack(
+            children: [
+              Container(
+                height: 10,
+                decoration: BoxDecoration(
+                  color: AppColors.border,
+                  borderRadius: BorderRadius.circular(5),
+                ),
               ),
-            ),
+              FractionallySizedBox(
+                widthFactor: _progression,
+                child: Container(
+                  height: 10,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                        colors: [AppColors.primary, AppColors.accent]),
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 10),
           Row(
@@ -443,7 +415,6 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
     );
   }
 
-  // ── Histogramme ───────────────────────────────────────────────────────────
   Widget _buildHistogramme() {
     final jours = _joursAffiches;
     final now   = DateTime.now();
@@ -458,33 +429,15 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Minutes écoutées ce mois',
-                      style: GoogleFonts.syne(
-                          color: AppColors.textPrimary,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700)),
-                  Text('Chaque barre = 1 jour',
-                      style: GoogleFonts.syne(
-                          color: AppColors.textSecondary, fontSize: 11)),
-                ],
-              ),
-              const Spacer(),
-              // Bouton rafraîchir
-              GestureDetector(
-                onTap: () async {
-                  setState(() => _loadingStats = true);
-                  await _loadStats();
-                },
-                child: const Icon(Icons.refresh_rounded,
-                    color: AppColors.textSecondary, size: 18),
-              ),
-            ],
-          ),
+          Text('Minutes écoutées ce mois',
+              style: GoogleFonts.syne(
+                  color: AppColors.textPrimary,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text('Chaque barre = 1 jour',
+              style: GoogleFonts.syne(
+                  color: AppColors.textSecondary, fontSize: 11)),
           const SizedBox(height: 20),
           SizedBox(
             height: 120,
@@ -551,7 +504,6 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
     );
   }
 
-  // ── Top morceaux ──────────────────────────────────────────────────────────
   Widget _buildTopMorceaux() {
     return Container(
       margin: const EdgeInsets.fromLTRB(24, 16, 24, 0),
@@ -564,37 +516,14 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Sourates les plus écoutées',
+          Text('Morceaux les plus écoutés',
               style: GoogleFonts.syne(
                   color: AppColors.textPrimary,
                   fontSize: 15,
                   fontWeight: FontWeight.w700)),
           const SizedBox(height: 16),
-          if (_topMorceaux.isEmpty)
-            // Message quand aucune écoute ce mois
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                child: Column(
-                  children: [
-                    const Icon(Icons.headphones_outlined,
-                        color: AppColors.textSecondary, size: 36),
-                    const SizedBox(height: 8),
-                    Text('Aucune écoute ce mois',
-                        style: GoogleFonts.syne(
-                            color: AppColors.textSecondary, fontSize: 13)),
-                    const SizedBox(height: 4),
-                    Text('Lance une sourate pour commencer !',
-                        style: GoogleFonts.syne(
-                            color: AppColors.textSecondary, fontSize: 11)),
-                  ],
-                ),
-              ),
-            )
-          else
-            ...List.generate(
-                _topMorceaux.length,
-                (i) => _morceauRow(i + 1, _topMorceaux[i])),
+          ...List.generate(_topMorceaux.length,
+              (i) => _morceauRow(i + 1, _topMorceaux[i])),
         ],
       ),
     );
@@ -605,7 +534,7 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
       AppColors.accent, AppColors.primary, AppColors.primaryLight,
       AppColors.textSecondary, AppColors.textSecondary,
     ];
-    final color = colors[(rang - 1).clamp(0, colors.length - 1)];
+    final color = colors[rang - 1];
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Row(
@@ -631,14 +560,14 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(m['titre'] ?? '',
+                Text(m['titre'],
                     style: GoogleFonts.syne(
                         color: AppColors.textPrimary,
                         fontSize: 13,
                         fontWeight: FontWeight.w600),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis),
-                Text(m['artiste'] ?? '',
+                Text(m['artiste'],
                     style: GoogleFonts.syne(
                         color: AppColors.textSecondary, fontSize: 11)),
               ],
@@ -658,89 +587,6 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
             ],
           ),
         ],
-      ),
->>>>>>> Stashed changes
-    );
-  }
-
-  // ── Skeletons (placeholders pendant le chargement) ────────────────────────
-  Widget _buildSkeletonHistogramme() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _skeletonBox(120, 14),
-          const SizedBox(height: 6),
-          _skeletonBox(80, 10),
-          const SizedBox(height: 20),
-          SizedBox(
-            height: 120,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: List.generate(30, (i) => Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 1.5),
-                  child: FractionallySizedBox(
-                    heightFactor: (0.1 + (i % 5) * 0.15).clamp(0.05, 0.9),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: AppColors.border,
-                        borderRadius: BorderRadius.circular(3),
-                      ),
-                    ),
-                  ),
-                ),
-              )),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSkeletonTop() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _skeletonBox(160, 14),
-          const SizedBox(height: 16),
-          ...List.generate(3, (_) => Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: Row(
-              children: [
-                _skeletonBox(40, 40),
-                const SizedBox(width: 12),
-                Expanded(child: _skeletonBox(double.infinity, 14)),
-              ],
-            ),
-          )),
-        ],
-      ),
-    );
-  }
-
-  Widget _skeletonBox(double w, double h) {
-    return Container(
-      width: w == double.infinity ? null : w,
-      height: h,
-      decoration: BoxDecoration(
-        color: AppColors.border,
-        borderRadius: BorderRadius.circular(6),
       ),
     );
   }
