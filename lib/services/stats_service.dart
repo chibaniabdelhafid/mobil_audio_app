@@ -31,7 +31,6 @@ class StatsService {
       final snap = await tx.get(docRef);
 
       if (!snap.exists) {
-        // Premier enregistrement du jour
         tx.set(docRef, {
           'date': dateKey,
           'minutesTotal': 1,
@@ -44,7 +43,7 @@ class StatsService {
           }
         });
       } else {
-        final data = snap.data()!;
+        final data        = snap.data()!;
         final souratesMap = Map<String, dynamic>.from(data['sourates'] ?? {});
         final key         = '$numeroSourate';
 
@@ -70,7 +69,7 @@ class StatsService {
     });
   }
 
-  // ── Enregistrer le début d'une nouvelle écoute (compteur d'écoutes) ───────
+  // ── Enregistrer le début d'une nouvelle écoute ───────────────────────────
   Future<void> enregistrerDebutEcoute({
     required int numeroSourate,
     required String nomSourate,
@@ -118,13 +117,13 @@ class StatsService {
     });
   }
 
-  // ── Lire les sessions du mois en cours ───────────────────────────────────
+  // ── Minutes par jour du mois courant ─────────────────────────────────────
   Future<Map<int, int>> getMinutesParJourMoisCourant() async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return {};
 
-    final now     = DateTime.now();
-    final prefix  = '${now.year}-${now.month.toString().padLeft(2,'0')}';
+    final now    = DateTime.now();
+    final prefix = '${now.year}-${now.month.toString().padLeft(2,'0')}';
 
     final snap = await _db
         .collection('users')
@@ -160,7 +159,6 @@ class StatsService {
         .where('date', isLessThanOrEqualTo:    '$prefix-31')
         .get();
 
-    // Agréger par sourate
     final Map<String, Map<String, dynamic>> aggregated = {};
 
     for (final doc in snap.docs) {
@@ -190,7 +188,7 @@ class StatsService {
     return liste.take(limit).toList();
   }
 
-  // ── Total heures du mois ──────────────────────────────────────────────────
+  // ── Total minutes du mois ─────────────────────────────────────────────────
   Future<int> getTotalMinutesMoisCourant() async {
     final parJour = await getMinutesParJourMoisCourant();
     return parJour.values.fold<int>(0, (a, b) => a + b);
