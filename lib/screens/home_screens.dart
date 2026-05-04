@@ -1,8 +1,6 @@
 // ============================================================
 //  lib/screens/home_screens.dart
-//  Écran principal avec navigation entre :
-//  - Page Statistiques
-//  - Page Lecteur Audio
+//  Statistiques dynamiques depuis Firestore + Lecteur audio
 // ============================================================
 
 import 'package:flutter/material.dart';
@@ -10,6 +8,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../widgets/app_theme.dart';
+import '../services/stats_service.dart';
 import 'player_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -32,8 +31,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: IndexedStack(
-        // IndexedStack garde les pages en mémoire → pas de rechargement
-        // quand on revient sur la page stats ou player
         index: _currentIndex,
         children: _pages,
       ),
@@ -54,10 +51,8 @@ class _HomeScreenState extends State<HomeScreen> {
         elevation: 0,
         selectedItemColor: AppColors.primary,
         unselectedItemColor: AppColors.textSecondary,
-        selectedLabelStyle: GoogleFonts.syne(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-        ),
+        selectedLabelStyle:
+            GoogleFonts.syne(fontSize: 11, fontWeight: FontWeight.w700),
         unselectedLabelStyle: GoogleFonts.syne(fontSize: 11),
         items: const [
           BottomNavigationBarItem(
@@ -77,7 +72,7 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 // ============================================================
-//  Page Statistiques (anciennement HomeScreen)
+//  Page Statistiques — données réelles depuis Firestore
 // ============================================================
 class _StatistiquesPage extends StatefulWidget {
   const _StatistiquesPage();
@@ -87,32 +82,28 @@ class _StatistiquesPage extends StatefulWidget {
 }
 
 class _StatistiquesPageState extends State<_StatistiquesPage> {
-  final _auth = FirebaseAuth.instance;
-  final _db   = FirebaseFirestore.instance;
+  final _auth         = FirebaseAuth.instance;
+  final _db           = FirebaseFirestore.instance;
+  final _statsService = StatsService();
 
-  String _prenom = '';
-  String _nom    = '';
-  int _objectif  = 20;
-  bool _loading  = true;
+  String _prenom   = '';
+  String _nom      = '';
+  int    _objectif = 20;
+  bool   _loading  = true;
 
-  final List<int> _minutesParJour = [
-    12, 0, 45, 30, 0, 60, 25, 0, 90, 15,
-    0, 40, 55, 20, 0, 70, 35, 0, 50, 80,
-    0, 25, 60, 45, 0, 30, 55, 0, 40, 20,
-  ];
-
-  final List<Map<String, dynamic>> _topMorceaux = [
-    {'titre': 'Sourate Al-Fatiha',   'artiste': 'Mishary Rashid',   'minutes': 45,  'ecoutes': 12},
-    {'titre': 'Sourate Al-Baqarah',  'artiste': 'Abdul Basit',      'minutes': 120, 'ecoutes': 8},
-    {'titre': 'Sourate Al-Kahf',     'artiste': 'Maher Al Muaiqly', 'minutes': 60,  'ecoutes': 6},
-    {'titre': 'Sourate Yasin',       'artiste': 'Saud Al-Shuraim',  'minutes': 35,  'ecoutes': 5},
-    {'titre': 'Sourate Al-Mulk',     'artiste': 'Mishary Rashid',   'minutes': 20,  'ecoutes': 4},
-  ];
+  // Données dynamiques depuis Firestore
+  Map<int, int>            _minutesParJour = {};
+  List<Map<String, dynamic>> _topMorceaux  = [];
+  int _totalMinutesMois = 0;
 
   @override
   void initState() {
     super.initState();
-    _loadProfil();
+    _loadAll();
+  }
+
+  Future<void> _loadAll() async {
+    await Future.wait([_loadProfil(), _loadStats()]);
   }
 
   Future<void> _loadProfil() async {
@@ -126,7 +117,25 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
           _prenom   = data['prenom'] ?? '';
           _nom      = data['nom']    ?? '';
           _objectif = data['objectifMensuel'] ?? 20;
-          _loading  = false;
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadStats() async {
+    try {
+      final results = await Future.wait([
+        _statsService.getMinutesParJourMoisCourant(),
+        _statsService.getTopSourates(),
+        _statsService.getTotalMinutesMoisCourant(),
+      ]);
+
+      if (mounted) {
+        setState(() {
+          _minutesParJour   = results[0] as Map<int, int>;
+          _topMorceaux      = results[1] as List<Map<String, dynamic>>;
+          _totalMinutesMois = results[2] as int;
+          _loading          = false;
         });
       }
     } catch (_) {
@@ -141,50 +150,64 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
     await _db.collection('users').doc(uid).update({'objectifMensuel': val});
   }
 
-  int get _totalMinutes => _minutesParJour.fold(0, (a, b) => a + b);
-  int get _totalHeures  => _totalMinutes ~/ 60;
-  int get _restMinutes  => _totalMinutes % 60;
+  // ── Getters calculés ───────────────────────────────────────────────────────
+  int get _totalHeures  => _totalMinutesMois ~/ 60;
+  int get _restMinutes  => _totalMinutesMois % 60;
   double get _progression =>
-      (_totalMinutes / (_objectif * 60)).clamp(0.0, 1.0);
+      (_totalMinutesMois / (_objectif * 60)).clamp(0.0, 1.0);
   int get _joursActifs =>
-      _minutesParJour.where((m) => m > 0).length;
+      _minutesParJour.values.where((m) => m > 0).length;
   int get _maxMinutes =>
-      _minutesParJour.reduce((a, b) => a > b ? a : b);
+      _minutesParJour.isEmpty
+          ? 0
+          : _minutesParJour.values.reduce((a, b) => a > b ? a : b);
   int get _nbJoursMois {
     final now = DateTime.now();
     return DateTime(now.year, now.month + 1, 0).day;
   }
-  List<int> get _joursAffiches =>
-      _minutesParJour.take(_nbJoursMois).toList();
+
+  // Construit la liste [jour1, jour2, ...] depuis la map Firestore
+  List<int> get _joursAffiches {
+    return List.generate(
+      _nbJoursMois,
+      (i) => _minutesParJour[i + 1] ?? 0,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     if (_loading) {
       return const Scaffold(
         backgroundColor: AppColors.background,
-        body: Center(child: CircularProgressIndicator(color: AppColors.primary)),
+        body: Center(
+            child: CircularProgressIndicator(color: AppColors.primary)),
       );
     }
 
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: CustomScrollView(
-          slivers: [
-            SliverToBoxAdapter(child: _buildHeader()),
-            SliverToBoxAdapter(child: _buildStatsGlobales()),
-            SliverToBoxAdapter(child: _buildObjectif()),
-            SliverToBoxAdapter(child: _buildHistogramme()),
-            SliverToBoxAdapter(child: _buildTopMorceaux()),
-            const SliverToBoxAdapter(child: SizedBox(height: 16)),
-          ],
+        child: RefreshIndicator(
+          color: AppColors.primary,
+          backgroundColor: AppColors.card,
+          onRefresh: _loadStats,
+          child: CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(child: _buildHeader()),
+              SliverToBoxAdapter(child: _buildStatsGlobales()),
+              SliverToBoxAdapter(child: _buildObjectif()),
+              SliverToBoxAdapter(child: _buildHistogramme()),
+              SliverToBoxAdapter(child: _buildTopMorceaux()),
+              const SliverToBoxAdapter(child: SizedBox(height: 16)),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildHeader() {
-    final now = DateTime.now();
+    final now  = DateTime.now();
     final mois = ['','Janvier','Février','Mars','Avril','Mai','Juin',
         'Juillet','Août','Septembre','Octobre','Novembre','Décembre'][now.month];
     return Container(
@@ -220,6 +243,21 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
               ],
             ),
           ),
+          // Bouton refresh manuel
+          GestureDetector(
+            onTap: _loadStats,
+            child: Container(
+              width: 42, height: 42,
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: const Icon(Icons.refresh_rounded,
+                  color: AppColors.textSecondary, size: 18),
+            ),
+          ),
           GestureDetector(
             onTap: () => _auth.signOut(),
             child: Container(
@@ -246,7 +284,9 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
           Expanded(child: _statCard(
             icon: Icons.headphones_rounded,
             label: 'Temps total',
-            value: '${_totalHeures}h ${_restMinutes}min',
+            value: _totalMinutesMois == 0
+                ? '0 min'
+                : '${_totalHeures}h ${_restMinutes}min',
             color: AppColors.primary,
           )),
           const SizedBox(width: 12),
@@ -318,7 +358,8 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
                       fontWeight: FontWeight.w700)),
               const Spacer(),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
                   color: AppColors.surface,
                   borderRadius: BorderRadius.circular(10),
@@ -388,7 +429,8 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
           if (_progression >= 1.0) ...[
             const SizedBox(height: 8),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
                 color: AppColors.accent.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(8),
@@ -445,7 +487,7 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: List.generate(jours.length, (i) {
                 final isToday = (i + 1) == now.day;
-                final ratio = _maxMinutes > 0
+                final ratio   = _maxMinutes > 0
                     ? jours[i] / _maxMinutes
                     : 0.0;
                 return Expanded(
@@ -521,9 +563,25 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
                   color: AppColors.textPrimary,
                   fontSize: 15,
                   fontWeight: FontWeight.w700)),
-          const SizedBox(height: 16),
-          ...List.generate(_topMorceaux.length,
-              (i) => _morceauRow(i + 1, _topMorceaux[i])),
+          const SizedBox(height: 8),
+          if (_topMorceaux.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Center(
+                child: Text(
+                  'Commencez à écouter pour voir vos stats ici !',
+                  style: GoogleFonts.syne(
+                      color: AppColors.textSecondary, fontSize: 13),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            )
+          else ...[
+            const SizedBox(height: 8),
+            ...List.generate(
+                _topMorceaux.length,
+                (i) => _morceauRow(i + 1, _topMorceaux[i])),
+          ],
         ],
       ),
     );
@@ -534,7 +592,7 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
       AppColors.accent, AppColors.primary, AppColors.primaryLight,
       AppColors.textSecondary, AppColors.textSecondary,
     ];
-    final color = colors[rang - 1];
+    final color = colors[(rang - 1).clamp(0, colors.length - 1)];
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Row(
@@ -560,14 +618,14 @@ class _StatistiquesPageState extends State<_StatistiquesPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(m['titre'],
+                Text(m['titre'] ?? '',
                     style: GoogleFonts.syne(
                         color: AppColors.textPrimary,
                         fontSize: 13,
                         fontWeight: FontWeight.w600),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis),
-                Text(m['artiste'],
+                Text(m['artiste'] ?? '',
                     style: GoogleFonts.syne(
                         color: AppColors.textSecondary, fontSize: 11)),
               ],
